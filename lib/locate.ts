@@ -3,7 +3,7 @@
 // decision logic can be tested on its own.
 
 import { pageFromFraction } from "./progress";
-import { buildTsQuery } from "./search";
+import { buildQuery, type SearchQuery } from "./search";
 import type { LocateResult } from "./types";
 
 export interface PassageHit {
@@ -21,7 +21,7 @@ export interface LocateDeps {
   /** Whether this book has any imported text or photographed pages to search. */
   hasPassages: boolean;
   terms(description: string): Promise<string[]>;
-  search(tsQuery: string): Promise<PassageHit[]>;
+  search(query: SearchQuery): Promise<PassageHit[]>;
   choose(
     description: string,
     candidates: { content: string; label: string }[],
@@ -63,8 +63,8 @@ export async function locate(
   if (deps.hasPassages) {
     // Extra search words are a bonus; the reader's own words still work without them.
     const extra = await deps.terms(description).catch(() => [] as string[]);
-    const query = buildTsQuery(description, extra);
-    const hits = query ? (await deps.search(query)).slice(0, MAX_CANDIDATES) : [];
+    const query = buildQuery(description, extra);
+    const hits = query.terms.length > 0 ? (await deps.search(query)).slice(0, MAX_CANDIDATES) : [];
 
     if (hits.length > 0) {
       const choice = await deps.choose(

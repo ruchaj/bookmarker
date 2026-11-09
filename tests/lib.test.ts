@@ -1,28 +1,58 @@
 import { describe, expect, it } from "vitest";
-import { buildTsQuery, words } from "@/lib/search";
+import { buildQuery, rankPassages, stem, words } from "@/lib/search";
 import { chunkSections, sectionsFromPlainText, TARGET_CHARS } from "@/lib/chunk";
 import { pageFromFraction, percentRead, readingStats } from "@/lib/progress";
 import { mapCatalogDocs } from "@/lib/catalog";
 
-describe("buildTsQuery", () => {
-  it("keeps content words and drops filler", () => {
-    const q = buildTsQuery("I think they had just arrived at the lighthouse and found the letter");
-    expect(q.split(" | ")).toEqual(["arrived", "lighthouse", "found", "letter"]);
+describe("search", () => {
+  it("keeps content words, stems them, and drops filler", () => {
+    const q = buildQuery("I think they had just arrived at the lighthouse and found the letters");
+    expect(q.terms).toEqual(["arriv", "lighthous", "found", "letter"]);
+    expect(q.phrases).toEqual([]);
   });
 
-  it("adds phrases for multi-word terms and never emits unsafe characters", () => {
-    const q = buildTsQuery("the keeper's dog", ["Old Tom", "sea-cave", "'); drop table books;--", "!!!"]);
-    expect(q).toContain("(old <-> tom)");
-    expect(q).toContain("(sea <-> cave)");
-    expect(q).toMatch(/^[a-z0-9 |()<>-]+$/);
+  it("adds phrases for multi-word terms", () => {
+    const q = buildQuery("the keeper's dog", ["Old Tom", "sea-cave", "!!!", "of the"]);
+    expect(q.phrases).toEqual([["old", "tom"], ["sea", "cave"]]);
+    expect(q.terms).toEqual(expect.arrayContaining(["keeper", "dog", "old", "tom", "sea", "cave"]));
   });
 
-  it("returns an empty string when nothing is searchable", () => {
-    expect(buildTsQuery("the and of it")).toBe("");
+  it("returns no terms when nothing is searchable", () => {
+    expect(buildQuery("the and of it").terms).toEqual([]);
   });
 
-  it("strips accents", () => {
+  it("strips accents and stems consistently", () => {
     expect(words("Café Brontë")).toEqual(["cafe", "bronte"]);
+    expect(stem("letters")).toBe(stem("letter"));
+    expect(stem("arrived")).toBe(stem("arriving"));
+    expect(stem("arrive")).toBe(stem("arrives"));
+    expect(stem("running")).toBe(stem("run"));
+    expect(stem("stories")).toBe(stem("story"));
+    expect(stem("glass")).toBe("glass");
+  });
+
+  const passages = [
+    { content: "Mara reached the harbour at dusk. The ferry had already gone, and gulls wheeled over the empty quay." },
+    { content: "At the lighthouse she climbed the stairs and found a letter tucked under the lamp. It was addressed to her mother." },
+    { content: "The storm broke the next morning. Old Tom rowed out past the rocks and did not come back." },
+    { content: "Tom was old now, the letter said, and the lamp had not been lit in years." },
+  ];
+
+  it("ranks the passage the reader is describing first", () => {
+    const hits = rankPassages(passages, buildQuery("they had just got to the lighthouse and she finds the letters"));
+    expect(hits[0]).toBe(passages[1]);
+    expect(hits).not.toContain(passages[0]);
+  });
+
+  it("prefers a passage where a name appears as a phrase", () => {
+    const hits = rankPassages(passages, buildQuery("", ["Old Tom"]));
+    expect(hits[0]).toBe(passages[2]);
+    expect(hits).toContain(passages[3]);
+  });
+
+  it("returns nothing for an empty query or an empty book", () => {
+    expect(rankPassages(passages, buildQuery("the of and"))).toEqual([]);
+    expect(rankPassages([], buildQuery("lighthouse"))).toEqual([]);
   });
 });
 

@@ -1,5 +1,5 @@
-// Turns a reader's description (plus any extra search terms) into a
-// PostgreSQL tsquery string for search_passages().
+// Full-text search over a book's passages, written from scratch so the app
+// needs no database: tokenise, stem lightly, and rank with BM25.
 
 const STOP_WORDS = new Set(
   `a about above after again against all am an and any are as at be because been before being below
@@ -15,7 +15,7 @@ someone somebody got get getting went going really maybe around happened happeni
     .filter(Boolean),
 );
 
-/** Lower-cased words made only of letters and digits, safe to place in a tsquery. */
+/** Lower-cased words made only of letters and digits, accents removed. */
 export function words(text: string): string[] {
   return (
     text
@@ -27,25 +27,108 @@ export function words(text: string): string[] {
 }
 
 /**
- * Build an OR query. Single words match on their own; multi-word terms
- * (names, phrases) match as adjacent words and also word by word.
+ * A small English stemmer: enough to match "letters" with "letter" and
+ * "arrived" with "arriving". The same rule runs on the description and the
+ * book, so the stems only need to agree with each other, not be real words.
  */
-export function buildTsQuery(description: string, extraTerms: string[] = []): string {
-  const parts = new Set<string>();
+export function stem(word: string): string {
+  let w = word;
+  if (w.length <= 3) return w;
+  if (w.endsWith("ies") && w.length > 4) w = `${w.slice(0, -3)}y`;
+  else if (/(ch|sh|ss|x|z)es$/.test(w)) w = w.slice(0, -2);
+  else if (w.endsWith("s") && !/(ss|us|is)$/.test(w)) w = w.slice(0, -1);
+
+  const strip = (suffix: string, minStem: number) => {
+    if (!w.endsWith(suffix) || w.length - suffix.length < minStem) return false;
+    w = w.slice(0, -suffix.length);
+    if (/([bdfgklmnprt])\1$/.test(w)) w = w.slice(0, -1); // running -> run
+    return true;
+  };
+  if (!strip("ing", 3)) strip("ed", 3);
+
+  if (w.length > 4 && w.endsWith("e")) w = w.slice(0, -1);
+  return w;
+}
+
+export interface SearchQuery {
+  /** Stemmed words; a passage matching any of them is a candidate. */
+  terms: string[];
+  /** Stemmed word sequences (names, phrases) that score extra when they appear together. */
+  phrases: string[][];
+}
+
+/** Build a query from the reader's description plus any extra terms (names, synonyms). */
+export function buildQuery(description: string, extraTerms: string[] = []): SearchQuery {
+  const terms = new Set<string>();
+  const phrases = new Map<string, string[]>();
 
   for (const w of words(description)) {
-    if (w.length > 2 && !STOP_WORDS.has(w)) parts.add(w);
+    if (w.length > 2 && !STOP_WORDS.has(w)) terms.add(stem(w));
   }
 
   for (const term of extraTerms.slice(0, 40)) {
     const ws = words(term).filter((w) => w.length > 1);
-    if (ws.length === 0) continue;
     const meaningful = ws.filter((w) => w.length > 2 && !STOP_WORDS.has(w));
-    for (const w of meaningful) parts.add(w);
+    for (const w of meaningful) terms.add(stem(w));
     if (ws.length > 1 && ws.length <= 4 && meaningful.length === ws.length) {
-      parts.add(`(${ws.join(" <-> ")})`);
+      const stems = ws.map(stem);
+      phrases.set(stems.join(" "), stems);
     }
   }
 
-  return [...parts].slice(0, 60).join(" | ");
+  return { terms: [...terms].slice(0, 60), phrases: [...phrases.values()].slice(0, 20) };
+}
+
+const K1 = 1.4;
+const B = 0.75;
+
+/** The passages that best match the query, best first. Passages matching nothing are left out. */
+export function rankPassages<T extends { content: string }>(passages: T[], query: SearchQuery, limit = 20): T[] {
+  if (query.terms.length === 0 || passages.length === 0) return [];
+  const wanted = new Set(query.terms);
+
+  const docs = passages.map((passage) => {
+    const tokens = words(passage.content).map(stem);
+    const counts = new Map<string, number>();
+    for (const token of tokens) {
+      if (wanted.has(token)) counts.set(token, (counts.get(token) ?? 0) + 1);
+    }
+    return { passage, tokens, counts };
+  });
+
+  const averageLength = docs.reduce((n, d) => n + d.tokens.length, 0) / docs.length || 1;
+  const idf = new Map<string, number>();
+  for (const term of wanted) {
+    const containing = docs.reduce((n, d) => n + (d.counts.has(term) ? 1 : 0), 0);
+    idf.set(term, Math.log(1 + (docs.length - containing + 0.5) / (containing + 0.5)));
+  }
+
+  const hasPhrase = (tokens: string[], phrase: string[]) => {
+    for (let i = tokens.indexOf(phrase[0]); i !== -1; i = tokens.indexOf(phrase[0], i + 1)) {
+      if (phrase.every((word, j) => tokens[i + j] === word)) return true;
+    }
+    return false;
+  };
+
+  return docs
+    .map((doc, order) => {
+      let score = 0;
+      for (const [term, count] of doc.counts) {
+        const length = 1 - B + (B * doc.tokens.length) / averageLength;
+        score += (idf.get(term) ?? 0) * ((count * (K1 + 1)) / (count + K1 * length));
+      }
+      if (score > 0) {
+        for (const phrase of query.phrases) {
+          if (hasPhrase(doc.tokens, phrase)) {
+            // Half again on top of the words' own scores: a bonus, not a second count.
+            score += 0.5 * phrase.reduce((n, word) => n + (idf.get(word) ?? 0), 0);
+          }
+        }
+      }
+      return { doc, score, order };
+    })
+    .filter((r) => r.score > 0)
+    .sort((a, b) => b.score - a.score || a.order - b.order)
+    .slice(0, Math.max(1, Math.min(limit, 50)))
+    .map((r) => r.doc.passage);
 }

@@ -42,7 +42,7 @@ describe("locate", () => {
     const search = vi.fn(async () => [lighthouse]);
     await locate("the lighthouse letter", { total_pages: 100 },
       deps({ terms: async () => { throw new Error("down"); }, search }));
-    expect(search).toHaveBeenCalledWith("lighthouse | letter");
+    expect(search).toHaveBeenCalledWith({ terms: ["lighthous", "letter"], phrases: [] });
   });
 
   it("falls back to an estimate when no passage fits, and says so", async () => {

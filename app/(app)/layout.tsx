@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { Wordmark } from "@/components/Wordmark";
 import { signOut } from "@/app/auth/actions";
+import { requireUser } from "@/lib/auth";
 
-export default function AppLayout({ children }: LayoutProps<"/">) {
+export default async function AppLayout({ children }: LayoutProps<"/">) {
+  await requireUser();
+
   return (
     <>
       <header className="border-b border-rule">

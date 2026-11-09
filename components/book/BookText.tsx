@@ -3,11 +3,26 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { chunkSections, sectionsFromPlainText, type Section } from "@/lib/chunk";
-import { createClient } from "@/lib/supabase/client";
 
 const MAX_FILE_BYTES = 40 * 1024 * 1024;
 const MAX_PASSAGES = 8000;
-const BATCH = 100;
+
+async function send(url: string, method: "PUT" | "DELETE", body?: unknown): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error("Couldn't reach the server. Check your connection and try again.");
+  }
+  if (!response.ok) {
+    const data = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error ?? "Something went wrong. Try again.");
+  }
+}
 
 export function BookText({
   bookId,
@@ -23,15 +38,19 @@ export function BookText({
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const endpoint = `/api/books/${bookId}/text`;
 
-  async function removeText(announce = true) {
-    const supabase = createClient();
-    const { error: failed } = await supabase.from("passages").delete().eq("book_id", bookId).eq("kind", "text");
-    if (failed) throw new Error("The saved text couldn't be removed. Try again.");
-    await supabase.from("books").update({ text_name: null, text_chars: 0 }).eq("id", bookId);
-    if (announce) {
+  async function removeText() {
+    setWorking(true);
+    setError(null);
+    try {
+      await send(endpoint, "DELETE");
       setStatus("The book's text was removed.");
       router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The text couldn't be removed.");
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -52,29 +71,12 @@ export function BookText({
         throw new Error("Choose an EPUB or a plain-text (.txt) file. PDFs and Kindle files aren't supported.");
       }
 
-      const { chunks, totalChars } = chunkSections(sections);
+      const { chunks } = chunkSections(sections);
       if (chunks.length === 0) throw new Error("No readable text was found in that file.");
       if (chunks.length > MAX_PASSAGES) throw new Error("That file is too long to import as one book.");
 
-      const supabase = createClient();
-      await removeText(false);
-      try {
-        for (let i = 0; i < chunks.length; i += BATCH) {
-          setStatus(`Saving passage ${Math.min(i + BATCH, chunks.length)} of ${chunks.length}…`);
-          const { error: failed } = await supabase.from("passages").insert(
-            chunks.slice(i, i + BATCH).map((c) => ({ ...c, book_id: bookId, kind: "text" })),
-          );
-          if (failed) throw new Error("Saving the text stopped partway. Check your connection and import the file again.");
-        }
-        const { error: failed } = await supabase
-          .from("books")
-          .update({ text_name: file.name.slice(0, 300), text_chars: totalChars })
-          .eq("id", bookId);
-        if (failed) throw new Error("The text was saved but the book couldn't be updated. Import the file again.");
-      } catch (e) {
-        await removeText(false).catch(() => {});
-        throw e;
-      }
+      setStatus(`Saving ${chunks.length.toLocaleString()} passages…`);
+      await send(endpoint, "PUT", { name: file.name.slice(0, 300), chunks });
 
       setStatus(`Imported ${file.name}: ${chunks.length.toLocaleString()} passages are now searchable.`);
       router.refresh();
@@ -115,13 +117,7 @@ export function BookText({
         </button>
         {textName && (
           <button type="button" className="btn-text" disabled={working}
-            onClick={() => {
-              setWorking(true);
-              setError(null);
-              removeText()
-                .catch((e) => setError(e instanceof Error ? e.message : "The text couldn't be removed."))
-                .finally(() => setWorking(false));
-            }}>
+            onClick={() => void removeText()}>
             Remove the text
           </button>
         )}

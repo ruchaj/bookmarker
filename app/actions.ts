@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import * as z from "zod/v4";
+import { requireUser } from "@/lib/auth";
 import { COVER_HOST } from "@/lib/catalog";
-import { createClient } from "@/lib/supabase/server";
+import * as library from "@/lib/store/library";
 import type { ActionResult } from "@/lib/types";
 
 const uuid = z.uuid();
@@ -25,26 +26,36 @@ function problem(error: z.ZodError): ActionResult {
   return { ok: false, error: error.issues[0]?.message ?? "Check what you entered." };
 }
 
+function failure(error: unknown, fallback: string): ActionResult {
+  if (error instanceof library.NotFoundError) return { ok: false, error: error.message };
+  console.error(error);
+  return { ok: false, error: fallback };
+}
+
+function refresh(bookId: string) {
+  revalidatePath(`/books/${bookId}`);
+  revalidatePath("/library");
+}
+
 export async function addBook(input: z.input<typeof NewBook>): Promise<ActionResult> {
+  const user = await requireUser();
   const parsed = NewBook.safeParse(input);
   if (!parsed.success) return problem(parsed.error);
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("books")
-    .insert({
+  let bookId: string;
+  try {
+    const book = await library.addBook(user.id, {
       ...parsed.data,
       author: parsed.data.author || null,
       isbn: parsed.data.isbn || null,
-      finished_at: parsed.data.status === "finished" ? new Date().toISOString() : null,
-      current_page: parsed.data.status === "finished" ? (parsed.data.total_pages ?? 0) : 0,
-    })
-    .select("id")
-    .single();
-  if (error || !data) return { ok: false, error: "The book couldn't be saved. Try again." };
+    });
+    bookId = book.id;
+  } catch (error) {
+    return failure(error, "The book couldn't be saved. Try again.");
+  }
 
   revalidatePath("/library");
-  redirect(`/books/${data.id}`);
+  redirect(`/books/${bookId}`);
 }
 
 export async function recordProgress(
@@ -52,19 +63,16 @@ export async function recordProgress(
   page: number,
   source: "manual" | "description",
 ): Promise<ActionResult> {
+  const user = await requireUser();
   if (!uuid.safeParse(bookId).success || !pageNumber.safeParse(page).success) {
     return { ok: false, error: "Enter a page number." };
   }
-  const supabase = await createClient();
-  const { error } = await supabase.rpc("record_progress", {
-    p_book: bookId,
-    p_page: page,
-    p_source: source === "description" ? "description" : "manual",
-  });
-  if (error) return { ok: false, error: "Your page couldn't be saved. Try again." };
-
-  revalidatePath(`/books/${bookId}`);
-  revalidatePath("/library");
+  try {
+    await library.recordProgress(user.id, bookId, page, source === "description" ? "description" : "manual");
+  } catch (error) {
+    return failure(error, "Your page couldn't be saved. Try again.");
+  }
+  refresh(bookId);
   return { ok: true };
 }
 
@@ -78,39 +86,15 @@ const Scan = z.object({
 
 /** Save a confirmed page photo: its text becomes searchable and the reader's place moves to it. */
 export async function saveScan(input: z.input<typeof Scan>): Promise<ActionResult> {
+  const user = await requireUser();
   const parsed = Scan.safeParse(input);
   if (!parsed.success) return problem(parsed.error);
-  const { bookId, page } = parsed.data;
-
-  // With one page in the photo, the confirmed number is that page's number
-  // (the reader may have corrected it). With two, it belongs to the later page.
-  const pages = parsed.data.pages
-    .map((p, i, all) => ({
-      text: p.text.trim(),
-      page_number: i === all.length - 1 ? page : (p.page_number ?? Math.max(0, page - 1)),
-    }))
-    .filter((p) => p.text.length > 0);
-
-  const supabase = await createClient();
-  if (pages.length > 0) {
-    // Re-photographing a page replaces the earlier copy of it.
-    await supabase
-      .from("passages")
-      .delete()
-      .eq("book_id", bookId)
-      .eq("kind", "scan")
-      .in("page_number", pages.map((p) => p.page_number));
-    const { error } = await supabase.from("passages").insert(
-      pages.map((p) => ({ book_id: bookId, kind: "scan", page_number: p.page_number, content: p.text })),
-    );
-    if (error) return { ok: false, error: "The page text couldn't be saved. Try again." };
+  try {
+    await library.saveScan(user.id, parsed.data.bookId, parsed.data.page, parsed.data.pages);
+  } catch (error) {
+    return failure(error, "Your page couldn't be saved. Try again.");
   }
-
-  const { error } = await supabase.rpc("record_progress", { p_book: bookId, p_page: page, p_source: "photo" });
-  if (error) return { ok: false, error: "Your page couldn't be saved. Try again." };
-
-  revalidatePath(`/books/${bookId}`);
-  revalidatePath("/library");
+  refresh(parsed.data.bookId);
   return { ok: true };
 }
 
@@ -123,43 +107,27 @@ const Details = z.object({
 });
 
 export async function updateBook(input: z.input<typeof Details>): Promise<ActionResult> {
+  const user = await requireUser();
   const parsed = Details.safeParse(input);
   if (!parsed.success) return problem(parsed.error);
   const { bookId, ...fields } = parsed.data;
-
-  const supabase = await createClient();
-  const { data: book } = await supabase
-    .from("books")
-    .select("current_page, status, finished_at")
-    .eq("id", bookId)
-    .maybeSingle();
-  if (!book) return { ok: false, error: "Book not found." };
-
-  const { error } = await supabase
-    .from("books")
-    .update({
-      title: fields.title,
-      author: fields.author || null,
-      total_pages: fields.total_pages,
-      status: fields.status,
-      current_page: fields.total_pages ? Math.min(book.current_page, fields.total_pages) : book.current_page,
-      finished_at:
-        fields.status === "finished" ? (book.finished_at ?? new Date().toISOString()) : null,
-    })
-    .eq("id", bookId);
-  if (error) return { ok: false, error: "Your changes couldn't be saved. Try again." };
-
-  revalidatePath(`/books/${bookId}`);
-  revalidatePath("/library");
+  try {
+    await library.updateBook(user.id, bookId, { ...fields, author: fields.author || null });
+  } catch (error) {
+    return failure(error, "Your changes couldn't be saved. Try again.");
+  }
+  refresh(bookId);
   return { ok: true };
 }
 
 export async function deleteBook(bookId: string): Promise<ActionResult> {
+  const user = await requireUser();
   if (!uuid.safeParse(bookId).success) return { ok: false, error: "Book not found." };
-  const supabase = await createClient();
-  const { error } = await supabase.from("books").delete().eq("id", bookId);
-  if (error) return { ok: false, error: "The book couldn't be deleted. Try again." };
-
+  try {
+    await library.deleteBook(user.id, bookId);
+  } catch (error) {
+    return failure(error, "The book couldn't be deleted. Try again.");
+  }
   revalidatePath("/library");
   redirect("/library");
 }

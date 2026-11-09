@@ -1,5 +1,6 @@
-import { aiFailure, fail, readImage, requireUser, spendAiRequest } from "@/lib/api";
+import { aiFailure, fail, readImage, requireApiUser, spendAiRequest } from "@/lib/api";
 import { readPagePhoto } from "@/lib/ai";
+import { getBook } from "@/lib/store/library";
 
 export const maxDuration = 60;
 
@@ -7,17 +8,16 @@ export const maxDuration = 60;
 // Nothing is saved here: the reader confirms the page first, then the
 // saveScan action stores it. The photo itself is never kept.
 export async function POST(request: Request, ctx: RouteContext<"/api/books/[id]/scan">) {
-  const auth = await requireUser();
+  const auth = await requireApiUser(request);
   if ("denied" in auth) return auth.denied;
 
   const { id } = await ctx.params;
-  const { data: book } = await auth.supabase.from("books").select("id").eq("id", id).maybeSingle();
-  if (!book) return fail(404, "Book not found.");
+  if (!(await getBook(auth.user.id, id))) return fail(404, "Book not found.");
 
   const photo = readImage(await request.json().catch(() => null));
   if (!photo) return fail(400, "Send a JPEG, PNG or WebP photo under 4.8 MB.");
 
-  const over = await spendAiRequest(auth.supabase);
+  const over = await spendAiRequest(auth.user.id);
   if (over) return over;
 
   try {

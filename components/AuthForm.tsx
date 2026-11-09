@@ -7,11 +7,9 @@ import type { AuthState } from "@/app/auth/actions";
 export function AuthForm({
   mode,
   action,
-  notice,
 }: {
   mode: "login" | "signup";
   action: (prev: AuthState, form: FormData) => Promise<AuthState>;
-  notice?: string;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
   const isSignup = mode === "signup";
@@ -26,7 +24,6 @@ export function AuthForm({
       </p>
 
       <form action={formAction} className="mt-8 space-y-5">
-        {(state.notice ?? notice) && <p className="notice" role="status">{state.notice ?? notice}</p>}
         {state.error && <p className="alert" role="alert">{state.error}</p>}
 
         <div>

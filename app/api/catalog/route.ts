@@ -1,9 +1,9 @@
 import type { NextRequest } from "next/server";
-import { fail, requireUser } from "@/lib/api";
+import { fail, requireApiUser } from "@/lib/api";
 import { searchCatalog } from "@/lib/catalog";
 
 export async function GET(request: NextRequest) {
-  const auth = await requireUser();
+  const auth = await requireApiUser(request);
   if ("denied" in auth) return auth.denied;
 
   const q = request.nextUrl.searchParams.get("q")?.trim().slice(0, 200) ?? "";

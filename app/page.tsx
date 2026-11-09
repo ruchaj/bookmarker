@@ -2,15 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ForeEdge } from "@/components/ForeEdge";
 import { Wordmark } from "@/components/Wordmark";
-import { isConfigured } from "@/lib/env";
-import { createClient } from "@/lib/supabase/server";
+import { getUser } from "@/lib/auth";
 
 export default async function Home() {
-  if (isConfigured) {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getClaims();
-    if (data?.claims) redirect("/library");
-  }
+  if (await getUser()) redirect("/library");
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-5 pb-20">
@@ -18,13 +13,6 @@ export default async function Home() {
         <Wordmark />
         <Link href="/login" className="btn-text inline-flex items-center">Sign in</Link>
       </header>
-
-      {!isConfigured && (
-        <p className="alert mb-6" role="alert">
-          This site isn&apos;t connected to its database yet. Follow the setup steps in the README,
-          then restart the server.
-        </p>
-      )}
 
       <section className="grid items-center gap-12 pt-8 md:grid-cols-[1.1fr_1fr] md:pt-16">
         <div>

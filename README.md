@@ -7,42 +7,72 @@ A reading tracker that keeps your place in every book.
 - **Find your page from memory.** Describe the last thing you remember reading and the app finds the page and shows you the passage to confirm.
 - **Add books three ways.** Search the Open Library catalog, photograph the cover or barcode, or type the details in.
 
-## Set it up
+There is no database to set up. Everything is stored as JSON files in a `data` folder next to the app, and sign-in is built in.
 
-You need three free accounts: [Supabase](https://supabase.com) (database and sign-in), the [Claude Console](https://console.anthropic.com) (AI), and [Vercel](https://vercel.com) (hosting). Allow about 20 minutes.
+## Run it
 
-### 1. Create the database
-
-1. In Supabase, create a new project.
-2. Open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it.
-3. Open **Project Settings → API Keys** and copy the **Project URL** and the **publishable** key. (On older projects this is called the `anon` key; it works the same.)
-
-### 2. Get a Claude API key
-
-In the Claude Console, create an API key and add some credit. Every photo read and every "find my page" search is billed to this key, so see [Costs and limits](#costs-and-limits).
-
-### 3. Run it on your computer
+You need [Node.js](https://nodejs.org) 20.9 or newer.
 
 ```bash
-cp .env.example .env.local   # then paste your three values into .env.local
+cp .env.example .env.local
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000 and create an account.
+Open http://localhost:3000 and create an account. The library, progress tracking and text import work straight away.
 
-Menu names in Supabase change now and then; look for the nearest match if one has moved.
+### Turn on the AI features
 
-Supabase's built-in email service only sends a few confirmation emails per hour. While you're testing, you can turn off **Authentication → Sign In / Providers → Email → Confirm email** so new accounts work straight away.
+Reading page photos, reading covers and "find my page" use Claude.
 
-### 4. Put it online
+1. Sign in to the Claude Console at https://platform.claude.com.
+2. Buy some credit on the Billing page. API usage is prepaid and separate from a Claude chat subscription; a few dollars covers a lot of testing.
+3. Open **API keys**, create a key, and copy it. It is shown only once.
+4. Put it in `.env.local` as `ANTHROPIC_API_KEY=sk-ant-...` and restart the app.
 
-1. Push this folder to a GitHub repository and import it in Vercel.
-2. In Vercel, add the same three environment variables from `.env.local`.
-3. Deploy, then copy your site's address.
-4. Back in Supabase, open **Authentication → URL Configuration**. Set **Site URL** to your site's address and add `https://your-site.example/**` under **Redirect URLs**. Without this, the confirmation link in sign-up emails points at localhost.
+Treat the key like a password. It belongs in `.env.local` or your host's settings, never in code you share.
 
-Before inviting other people, set up your own email sender in Supabase (**Authentication → Emails → SMTP Settings**) so confirmation emails aren't rate-limited.
+## Where your data lives
+
+```
+data/
+  accounts.json                         every account and sign-in session
+  users/<user id>/library.json          that reader's books, reading history and AI allowance
+  users/<user id>/passages/<book id>.json   a book's searchable text (imported text and photographed pages)
+```
+
+- **Back up** by copying the `data` folder. **Move** the app by copying it to the new machine.
+- Passwords are stored only as salted scrypt hashes, and session cookies only as hashes, so the files don't contain anything that can be used to sign in directly.
+- The files are readable JSON. You can open them to see exactly what is stored. Don't edit them while the app is running.
+- Set `DATA_DIR` to keep the folder somewhere else.
+
+### What this storage is good for, and what it isn't
+
+- **One running copy of the app must own the folder.** The app queues writes so requests can't overwrite each other, but two copies writing the same folder can.
+- **It suits a household, a book club or a class**, not thousands of readers. Each change rewrites that reader's library file, and every sign-in check reads `accounts.json`.
+- All storage code is in `lib/store/`. Swapping in a hosted document database (MongoDB, Firestore) means rewriting those three files; nothing else touches the disk.
+
+## Put it online
+
+The app needs a host that gives it **a disk that persists and a single long-running process**:
+
+- A small server or VPS, or a home machine: `npm run build`, then `npm start` (set `PORT` to choose the port).
+- Railway, Render or Fly.io, with a volume attached and `DATA_DIR` pointing at it.
+
+**Serverless hosts such as Vercel and Netlify will not work**: they don't keep files between requests, so accounts and books would vanish.
+
+Serve it over https. The sign-in cookie is marked secure in production, so it is only sent over https (or on `localhost`). If you must use plain http on a network address, set `INSECURE_COOKIES=true`.
+
+### Accounts
+
+- Anyone who can reach the site can create an account. After making yours, set `ALLOW_SIGNUPS=false` to close sign-up.
+- The app sends no email, so there is no "forgot password" link. To reset someone's password, run this on the server:
+
+  ```bash
+  node scripts/set-password.mjs reader@example.com "their new password"
+  ```
+
+- Eight wrong passwords for one email locks sign-in for that email for 15 minutes.
 
 ## How "find my page" works
 
@@ -56,28 +86,27 @@ The answer is only as good as the text the app has for that book. It tries three
 
 Things worth knowing:
 
-- **Importing text.** On a book's page, use **Import the book's text**. The file is unzipped and read in the browser; only the text is stored, in that user's private rows. Use copies you own. EPUBs with copy protection (most Kindle and Kobo purchases) can't be read. Public-domain books from Project Gutenberg work well, as `.txt` or EPUB.
+- **Importing text.** On a book's page, use **Import the book's text**. The file is unzipped and read in the browser; only the text is sent to the server and stored in that reader's folder. Use copies you own. EPUBs with copy protection (most Kindle and Kobo purchases) can't be read. Public-domain books from Project Gutenberg work well, as `.txt` or EPUB.
 - **Page numbers from imported text are approximate.** An EPUB has no page numbers, so the app works out how far through the text the passage is and applies that to the page count you entered for your copy. Expect to be within a page or two. Front matter in the file shifts it slightly.
-- **Search is keyword-based.** The app asks Claude for words the passage probably contains (names, places, objects, synonyms), runs a PostgreSQL full-text search, and has Claude choose among the best 14 passages. Descriptions that name a character, place or object work best. A purely abstract description ("the part where she felt sad") may miss.
+- **Search is keyword-based.** The app asks Claude for words the passage probably contains (names, places, objects, synonyms), ranks the book's passages against them with its own search (`lib/search.ts`), and has Claude choose among the best 14. Descriptions that name a character, place or object work best. A purely abstract description ("the part where she felt sad") may miss.
 - **Spoilers.** Results show only the matched passage, and the estimate prompt forbids mentioning later events.
 - **Photos aren't kept.** A page photo is shrunk in the browser, read once, and discarded. Only the page number and text are saved.
 
 ## Costs and limits
 
-- Each signed-in user can make 60 AI requests a day (photo reads, cover reads and page searches each count as one). Change it with `AI_DAILY_LIMIT`. The count is enforced in the database, so it can't be bypassed from the browser.
+- Each signed-in reader can make 60 AI requests a day (photo reads, cover reads and page searches each count as one). Change it with `AI_DAILY_LIMIT`.
 - A page photo or page search costs on the order of a cent or two at current Claude prices. Check your Console usage page after a few days of real use.
-- Anyone can sign up once the site is public. To keep it private, turn off **Allow new users to sign up** in Supabase after creating your own accounts.
 
 ## What has and hasn't been tested
 
-Tested automatically (`npm test`, 29 tests):
+**Automated tests** (`npm test`, 38 tests): the JSON store against a real folder (accounts, password hashing, sessions, privacy between readers, ids that try to escape the data folder, progress, simultaneous writes, text import, search, the AI allowance, the password-reset script), plus EPUB and text parsing, search ranking, reading stats, and the decision logic of "find my page".
 
-- The database schema, run in an in-process Postgres: users can only see and change their own rows, progress updates, passage search, the AI request counter, and cascade deletes.
-- EPUB and plain-text parsing, splitting text into passages, search-query building, reading stats, catalog result mapping, and the decision logic of "find my page" (with the AI and database stubbed).
+**The whole app in a real browser**, as a production build: sign-up, sign-in and sign-out, adding a book, saving a page, importing a text file, finding a page from a description, saving a page from a photo, and a second reader being unable to open, search or change the first reader's book. For this run the Claude API was replaced by a stand-in that returned canned answers.
 
-Checked by hand in a browser with sample data and a mocked API: the landing page, library, book page, add-a-book flow, and the "find my page" result cards, at phone and desktop widths.
+**Not yet tested:**
 
-**Not yet run against live services:** sign-up and sign-in against a real Supabase project, real Claude API calls (reading photos, choosing passages), and the Open Library search. This code was written without access to those services. Run through each feature once after setup, and expect that the AI prompts in `lib/ai.ts` may want tuning once you see real results.
+- Real Claude responses. The app's requests are well-formed, but how accurately Claude reads your page photos and picks passages is unknown until you try it. The prompts are all in `lib/ai.ts` if they need tuning.
+- The Open Library catalog search, which couldn't be reached from where this was built. Its failure message was tested; its results were not.
 
 ## Where things are
 
@@ -85,27 +114,28 @@ Checked by hand in a browser with sample data and a mocked API: the landing page
 app/
   page.tsx                  Landing page
   login/, signup/           Sign-in screens
-  auth/                     Sign-in actions and the email confirmation link
+  auth/actions.ts           Sign-up, sign-in, sign-out
   (app)/library/            Library and add-a-book screens
   (app)/books/[id]/         A book's page
-  api/                      Catalog search, cover reading, page reading, "find my page"
+  api/                      Catalog search, cover reading, page reading, text import, "find my page"
   actions.ts                Saving books, pages and scans
 components/                 Screens and their parts (ForeEdge is the progress marker)
 lib/
+  store/                    JSON storage: files.ts (engine), accounts.ts, library.ts
+  auth.ts                   The session cookie
   ai.ts                     Every Claude prompt
   locate.ts                 "Find my page" decision logic
   search.ts, chunk.ts, epub.ts   Text search and import
-  supabase/                 Database clients and session handling
-supabase/migrations/        The database schema
+scripts/set-password.mjs    Reset a reader's password
 tests/                      Automated tests
-proxy.ts                    Keeps sessions fresh and gates signed-in pages
+proxy.ts                    Sends signed-out visitors to the sign-in page
 ```
 
-Useful commands: `npm run dev`, `npm test`, `npm run typecheck`, `npm run lint`, `npm run build`.
+Useful commands: `npm run dev`, `npm test`, `npm run typecheck`, `npm run lint`, `npm run build`, `npm start`.
 
 ## Not built yet
 
 - PDF import, and one-click import of public-domain texts.
-- Password reset and social sign-in (Supabase supports both; the screens aren't built).
-- Meaning-based (embedding) search, which would handle vaguer descriptions. The `passages` table is the place to add a vector column.
-- Deleting an account from inside the app.
+- Email: confirmation, password reset by link, and social sign-in.
+- Meaning-based (embedding) search, which would handle vaguer descriptions.
+- Deleting an account from inside the app (for now, remove the user from `data/accounts.json` and delete their folder while the app is stopped).

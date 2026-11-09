@@ -18,13 +18,9 @@ const SOURCE_LABEL: Record<ProgressEvent["source"], string> = {
 export function BookView({
   book,
   events,
-  textPassages,
-  scanCount,
 }: {
   book: Book;
   events: ProgressEvent[];
-  textPassages: number;
-  scanCount: number;
 }) {
   const percent = percentRead(book);
   const finished = book.status === "finished";
@@ -74,12 +70,12 @@ export function BookView({
 
       <section className="panel" aria-labelledby="find-title">
         <h2 id="find-title" className="panel-title">Lost your place?</h2>
-        <WhereWasI bookId={book.id} hasText={textPassages > 0} scanCount={scanCount} hasLength={Boolean(book.total_pages)} />
+        <WhereWasI bookId={book.id} hasText={book.text_passages > 0} scanCount={book.scan_pages} hasLength={Boolean(book.total_pages)} />
       </section>
 
       <section className="panel" aria-labelledby="text-title">
         <h2 id="text-title" className="panel-title">Book text</h2>
-        <BookText bookId={book.id} textName={book.text_name} passageCount={textPassages} />
+        <BookText bookId={book.id} textName={book.text_name} passageCount={book.text_passages} />
       </section>
 
       <section className="panel" aria-labelledby="history-title">

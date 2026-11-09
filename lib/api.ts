@@ -1,33 +1,39 @@
 // Shared helpers for the API routes.
 
 import "server-only";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { AiNotConfiguredError, type ImageType } from "./ai";
-import { createClient } from "./supabase/server";
+import { getUser } from "./auth";
+import { bumpAiUsage } from "./store/library";
 
 export function fail(status: number, error: string) {
   return Response.json({ error }, { status });
 }
 
-/** The signed-in user and a database client acting as them, or a 401 response. */
-export async function requireUser() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+/**
+ * The signed-in user, or a response to send back instead. Requests that
+ * change something must also come from this site's own pages.
+ */
+export async function requireApiUser(request: Request) {
+  if (request.method !== "GET") {
+    const origin = request.headers.get("origin");
+    const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+    if (origin && host && new URL(origin).host !== host) {
+      return { denied: fail(403, "This request didn't come from the site.") } as const;
+    }
+  }
+  const user = await getUser();
   if (!user) return { denied: fail(401, "Sign in to continue.") } as const;
-  return { supabase, user } as const;
+  return { user } as const;
 }
 
 const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT ?? 60);
 
 /** Counts one AI request against the user's daily allowance. Returns a response if they are over it. */
-export async function spendAiRequest(supabase: SupabaseClient): Promise<Response | null> {
+export async function spendAiRequest(userId: string): Promise<Response | null> {
   if (!process.env.ANTHROPIC_API_KEY) return fail(503, new AiNotConfiguredError().message);
-  const { data, error } = await supabase.rpc("bump_ai_usage");
-  if (error) return fail(500, "Could not check today's AI allowance.");
-  if (typeof data === "number" && data > DAILY_LIMIT) {
+  const used = await bumpAiUsage(userId);
+  if (used > DAILY_LIMIT) {
     return fail(429, `You've used today's ${DAILY_LIMIT} AI requests. They reset at midnight UTC.`);
   }
   return null;
