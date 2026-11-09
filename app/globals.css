@@ -1,0 +1,189 @@
+@import "tailwindcss";
+
+/* Bookmarker's palette comes from a clothbound library book: cool paper,
+   bottle-green cloth, a crimson ribbon marker, gilt edges for finished books. */
+@theme {
+  --color-paper: #eef1ea;
+  --color-sheet: #fbfcf8;
+  --color-wash: #e1e7dc;
+  --color-rule: #c9d2c6;
+  --color-ink: #17231f;
+  --color-muted: #55635c;
+  --color-cloth: #1f4a3d;
+  --color-cloth-deep: #153428;
+  --color-ribbon: #c22f4a;
+  --color-ribbon-deep: #9c2139;
+  --color-gilt: #a9862f;
+
+  --font-serif: "Literata Variable", Georgia, "Times New Roman", serif;
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+body {
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-cloth);
+  outline-offset: 2px;
+}
+
+@layer components {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding: 0 1.125rem;
+    border-radius: 0.375rem;
+    border: 1px solid transparent;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background-color 120ms, border-color 120ms;
+  }
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .btn-primary {
+    background: var(--color-cloth);
+    color: var(--color-sheet);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-cloth-deep);
+  }
+  .btn-secondary {
+    background: var(--color-sheet);
+    border-color: var(--color-rule);
+    color: var(--color-ink);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: var(--color-cloth);
+  }
+  .btn-danger {
+    background: var(--color-ribbon);
+    color: #fff;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--color-ribbon-deep);
+  }
+  .btn-text {
+    min-height: 2.75rem;
+    padding: 0 0.25rem;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--color-cloth);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+
+  .field {
+    width: 100%;
+    min-height: 2.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-rule);
+    background: var(--color-sheet);
+    color: var(--color-ink);
+    font-size: 1rem;
+  }
+  .field::placeholder {
+    color: #7b877f;
+  }
+  .label {
+    display: block;
+    margin-bottom: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .hint {
+    font-size: 0.875rem;
+    color: var(--color-muted);
+  }
+  .alert {
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.375rem;
+    border-left: 3px solid var(--color-ribbon);
+    background: #f7e3e6;
+    color: #6d1425;
+    font-size: 0.9375rem;
+  }
+  .notice {
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.375rem;
+    border-left: 3px solid var(--color-cloth);
+    background: var(--color-wash);
+    font-size: 0.9375rem;
+  }
+
+  /* A section of the book page. Sections are separated by a rule, not boxed. */
+  .panel {
+    padding: 1.75rem 0;
+    border-top: 1px solid var(--color-rule);
+  }
+  .panel-title {
+    font-family: var(--font-serif);
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  /* The fore-edge: a book's page block seen from the side. Pages already
+     read are cloth-dark; the ribbon hangs where the reader stopped. */
+  .fore-edge {
+    position: relative;
+    height: 0.75rem;
+    border-radius: 2px;
+    background: repeating-linear-gradient(90deg, var(--color-sheet) 0 2px, var(--color-rule) 2px 3px);
+    box-shadow: inset 0 0 0 1px var(--color-rule);
+  }
+  .fore-edge-lg {
+    height: 1.5rem;
+  }
+  .fore-edge-read {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: 2px 0 0 2px;
+    background: repeating-linear-gradient(90deg, var(--color-cloth) 0 2px, var(--color-cloth-deep) 2px 3px);
+    transition: width 400ms ease;
+  }
+  .fore-edge-gilt .fore-edge-read {
+    border-radius: 2px;
+    background: repeating-linear-gradient(90deg, #c5a044 0 2px, var(--color-gilt) 2px 3px);
+  }
+  .fore-edge-ribbon {
+    position: absolute;
+    top: -3px;
+    width: 6px;
+    margin-left: -3px;
+    height: calc(100% + 11px);
+    background: var(--color-ribbon);
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 4px), 0 100%);
+    transition: left 400ms ease;
+  }
+  .fore-edge-lg .fore-edge-ribbon {
+    width: 10px;
+    margin-left: -5px;
+    height: calc(100% + 18px);
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 6px), 0 100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fore-edge-read,
+  .fore-edge-ribbon,
+  .btn {
+    transition: none;
+  }
+}
