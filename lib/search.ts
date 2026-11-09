@@ -79,6 +79,27 @@ export function buildQuery(description: string, extraTerms: string[] = []): Sear
   return { terms: [...terms].slice(0, 60), phrases: [...phrases.values()].slice(0, 20) };
 }
 
+/**
+ * Build a PostgreSQL tsquery string for use with to_tsquery('english', ...).
+ * Single-word terms are ORed; multi-word extra terms are added as phrases with <->.
+ */
+export function buildTsQuery(description: string, extraTerms: string[] = []): string {
+  const parts: string[] = [];
+
+  for (const w of words(description)) {
+    if (w.length > 2 && !STOP_WORDS.has(w)) parts.push(w);
+  }
+
+  for (const term of extraTerms.slice(0, 20)) {
+    const ws = words(term).filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+    if (ws.length === 0) continue;
+    parts.push(ws.length === 1 ? ws[0] : `(${ws.join(" <-> ")})`);
+  }
+
+  const seen = new Set<string>();
+  return parts.filter((p) => !seen.has(p) && seen.add(p)).join(" | ");
+}
+
 const K1 = 1.4;
 const B = 0.75;
 
